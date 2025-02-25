@@ -248,37 +248,78 @@ def buscar_produtos_shopify():
     return todos_produtos
 
 def processar_produtos_hiper(produtos_hiper):
-    """Processa produtos do Hiper"""
+    """Processa produtos do Hiper agrupando por produto base e suas variantes"""
     logger = logging.getLogger(__name__)
-    produtos_filtrados = {}  # Usando dicionário para evitar duplicatas
+    produtos_agrupados = {}  # Dicionário para agrupar produtos e variantes
     
     for produto in produtos_hiper:
-        nome = produto.get('nome', '').strip().lower()
-        sku = produto.get('codigoDeBarras')  # Campo correto do Hiper
+        nome_original = produto.get('nome', '').strip()
+        nome = nome_original.lower()
+        sku = produto.get('codigoDeBarras')
+        codigo = produto.get('codigo')  # Código do produto base
         
-        # Filtra produtos Saphira ou Olive (case insensitive)
-        if any(marca in nome for marca in ["saphira", "olive", "chloe"]):
-            if sku not in produtos_filtrados:
-                logger.info(f"Produto Hiper encontrado: {nome} (SKU: {sku})")
-                produtos_filtrados[sku] = produto
+        # Remove a verificação de "saphira" e processa todos os produtos
+        nome_base = nome.split(' - ')[0].strip()
+        
+        # Usa o código do produto base como chave de agrupamento
+        chave_agrupamento = str(codigo) if codigo else nome_base
+        
+        # Se é um novo produto, inicializa o dicionário
+        if chave_agrupamento not in produtos_agrupados:
+            produtos_agrupados[chave_agrupamento] = {
+                'nome': nome_base,
+                'codigo': codigo,
+                'variantes': []
+            }
+        
+        # Adiciona a variante ao produto
+        produtos_agrupados[chave_agrupamento]['variantes'].append({
+            'sku': sku,
+            'nome_completo': nome_original,
+            'quantidade': int(produto.get('quantidadeEmEstoque', 0)),
+            'tamanho': nome_original.split(' - ')[-1] if ' - ' in nome_original else None
+        })
     
-    logger.info(f"Total de produtos filtrados no Hiper: {len(produtos_filtrados)}")
-    return list(produtos_filtrados.values())
+    # Log dos produtos e suas variantes
+    for info in produtos_agrupados.values():
+        logger.info(f"\nProduto Hiper: {info['nome']}")
+        logger.info(f"Código base: {info['codigo']}")
+        logger.info(f"Total de variantes: {len(info['variantes'])}")
+        for variante in info['variantes']:
+            logger.info(f"  - Variante: {variante['nome_completo']}")
+            logger.info(f"    SKU: {variante['sku']}")
+            logger.info(f"    Tamanho: {variante['tamanho']}")
+            logger.info(f"    Quantidade: {variante['quantidade']}")
+    
+    logger.info(f"\nTotal de produtos únicos no Hiper: {len(produtos_agrupados)}")
+    total_variantes = sum(len(p['variantes']) for p in produtos_agrupados.values())
+    logger.info(f"Total de variantes: {total_variantes}")
+    
+    return produtos_agrupados
 
 def processar_produtos_shopify(produtos_shopify):
-    """Processa produtos da Shopify"""
+    """Processa produtos da Shopify mostrando produtos e variantes"""
     logger = logging.getLogger(__name__)
     produtos_filtrados = []
     
     for produto in produtos_shopify:
         nome = produto.title.strip().lower()
         
-        # Filtra produtos Saphira ou Olive (case insensitive)
-        if any(marca in nome for marca in ["saphira", "olive"]):
-            logger.info(f"Produto Shopify encontrado: {produto.title}")
-            produtos_filtrados.append(produto)
+        # Remove a verificação de "saphira" e processa todos os produtos
+        logger.info(f"\nProduto Shopify: {produto.title}")
+        logger.info(f"Total de variantes: {len(produto.variants)}")
+        
+        for variant in produto.variants:
+            logger.info(f"  - Variante: {variant.title}")
+            logger.info(f"    SKU: {variant.sku}")
+            logger.info(f"    Quantidade: {variant.inventory_quantity}")
+        
+        produtos_filtrados.append(produto)
     
-    logger.info(f"Total de produtos filtrados na Shopify: {len(produtos_filtrados)}")
+    logger.info(f"\nTotal de produtos únicos na Shopify: {len(produtos_filtrados)}")
+    total_variantes = sum(len(p.variants) for p in produtos_filtrados)
+    logger.info(f"Total de variantes: {total_variantes}")
+    
     return produtos_filtrados
 
 def atualizar_estoque_shopify(produtos_hiper, produtos_shopify):
@@ -288,13 +329,14 @@ def atualizar_estoque_shopify(produtos_hiper, produtos_shopify):
     
     # Criar dicionário de SKUs do Hiper para fácil acesso
     estoque_hiper = {}
-    for produto in produtos_hiper:
-        sku = produto.get('codigoDeBarras')
-        quantidade = int(produto.get('quantidadeEmEstoque', 0))
-        
-        if sku:
-            estoque_hiper[sku] = quantidade
-            logger.info(f"Estoque Hiper - SKU: {sku}, Quantidade: {quantidade}")
+    for produto_info in produtos_hiper.values():
+        for variante in produto_info['variantes']:
+            sku = variante['sku']
+            quantidade = variante['quantidade']
+            if sku:
+                estoque_hiper[sku] = quantidade
+                logger.info(f"Estoque Hiper - SKU: {sku}, Quantidade: {quantidade}")
+                logger.info(f"                Nome: {variante['nome_completo']}")
 
     # Contadores para o relatório
     atualizados = 0
@@ -337,7 +379,7 @@ def atualizar_estoque_shopify(produtos_hiper, produtos_shopify):
                         logger.error(f"Erro ao atualizar {sku}: {str(e)}")
                 else:
                     sem_alteracao += 1
-                    logger.debug(f"Sem alteração necessária: {produto.title} - {variant.title} (SKU: {sku}, Quantidade: {quantidade_atual})")
+                    logger.debug(f"Sem alteração necessária: {produto.title} - {variant.title} (SKU: {sku})")
     
     logger.info(f"\n=== Resumo de Atualizações ===")
     logger.info(f"Variantes atualizadas: {atualizados}")
