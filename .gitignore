@@ -1,3 +1,4 @@
 /insumos
 /logs
 /.venv
+*.csv
